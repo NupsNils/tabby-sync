@@ -1,8 +1,7 @@
 # TabbySync: als Stack in Dockhand einfügen.
-# OWNER durch den GitHub-Benutzernamen/Organisation ersetzen (klein geschrieben).
 services:
   tabbysync:
-    image: ghcr.io/OWNER/tabby-sync:latest
+    image: ghcr.io/nupsnils/tabby-sync:latest
     container_name: tabbysync
     restart: unless-stopped
     ports:

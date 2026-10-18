@@ -16,9 +16,18 @@ Selbst gehosteter Sync-Server für das Terminal [Tabby](https://tabby.sh). Ersat
 ## Installation in Dockhand
 
 1. In Dockhand einen neuen Stack anlegen.
-2. Inhalt von `docker-compose.yml` einfügen. Vorher `OWNER` im Image-Namen (`ghcr.io/OWNER/tabby-sync:latest`) durch den GitHub-Benutzernamen ersetzen (klein geschrieben). Das Image wird von GitHub Actions gebaut, sobald das Repository auf GitHub liegt.
+2. Inhalt von `docker-compose.yml` einfügen. Das Image `ghcr.io/nupsnils/tabby-sync:latest` wird von GitHub Actions bei jedem Push auf `main` gebaut.
 3. Optional Umgebungsvariablen setzen: `TABBYSYNC_PORT` (Standard 8080), `MAX_PROFILE_DELETES` (Standard 5).
 4. Deployen. Prüfen: `http://<server-ip>:8080/health` antwortet mit 200.
+
+### Privates Image: Zugang zu ghcr.io
+
+Das Repository ist privat, damit auch das Image. Docker braucht zum Herunterladen Zugangsdaten:
+
+1. Auf GitHub (Account mit Zugriff auf das Repo) unter Settings → Developer settings → Personal access tokens → Tokens (classic) einen Token nur mit `read:packages` erzeugen.
+2. In Dockhand eine Registry hinterlegen: Adresse `ghcr.io`, Benutzer = GitHub-Benutzername, Passwort = Token. Alternativ auf dem Server einmalig `docker login ghcr.io -u <github-benutzer>` ausführen und den Token als Passwort eingeben.
+
+Ohne Registry-Zugang geht es auch mit lokalem Bauen: Repo auf den Server klonen (`git clone https://github.com/NupsNils/tabby-sync.git`, als Passwort derselbe Token, dann mit Scope `repo`) und in der Compose-Datei die Zeile `image: ...` durch `build: /pfad/zu/tabby-sync` ersetzen. Updates dann per `git pull` und Stack neu deployen.
 
 ## Reverse Proxy (Nginx Proxy Manager)
 
