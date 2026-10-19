@@ -95,6 +95,7 @@ test('groups merged by id, group deletions do not count as profile deletions', (
   const r = merge(b, s, u)
   assert.deepEqual(r.cfg.groups, [g('g1', 'renamed'), g('g3'), g('g4')])
   assert.equal(r.deleted, 0)
+  assert.equal(r.deletedGroups, 1)
 })
 
 test('list items without id fall back to generic merge', () => {
@@ -127,12 +128,12 @@ test('setting removed on device is removed, top-level key added on server is kep
   assert.deepEqual(r.cfg, { a: 1, c: 3 })
 })
 
-test('base null: upload wins conflicts, server-only profiles kept', () => {
+test('base null: server wins, only unknown profiles appended', () => {
   const s = { appearance: { theme: 'Dark' }, profiles: [p('a', { name: 'srv' }), p('s')] }
   const u = { appearance: { theme: 'Light' }, profiles: [p('a', { name: 'up' }), p('u')] }
   const r = merge(null, s, u)
-  assert.equal(r.cfg.appearance.theme, 'Light')
-  assert.deepEqual(r.cfg.profiles, [p('a', { name: 'up' }), p('s'), p('u')])
+  assert.equal(r.cfg.appearance.theme, 'Dark')
+  assert.deepEqual(r.cfg.profiles, [p('a', { name: 'srv' }), p('s'), p('u')])
   assert.equal(r.deleted, 0)
 })
 
@@ -154,26 +155,134 @@ test('mass deletion: 6 deletes with maxDeletes 5 rejected, content is server', (
   assert.equal(r.deleted, 6)
 })
 
+const many = n => Array.from({ length: n }, (_, i) => p(`p${i}`))
+
 test('mass deletion: exactly 5 deletes accepted', () => {
-  const all = { profiles: ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map(id => p(id)) }
-  const r = merge(all, all, { profiles: [p('a'), p('b')] }, { maxDeletes: 5 })
+  const all = { profiles: many(12) }
+  const r = merge(all, all, { profiles: all.profiles.slice(0, 7) }, { maxDeletes: 5 })
   assert.equal(r.rejected, false)
   assert.equal(r.deleted, 5)
-  assert.deepEqual(ids(r.cfg), ['a', 'b'])
+  assert.equal(r.cfg.profiles.length, 7)
 })
 
 test('default maxDeletes is 5', () => {
-  const all = { profiles: ['a', 'b', 'c', 'd', 'e', 'f'].map(id => p(id)) }
-  assert.equal(merge(all, all, { profiles: [] }).rejected, true)
+  const all = { profiles: many(14) }
+  const r = merge(all, all, { profiles: all.profiles.slice(0, 8) })
+  assert.equal(r.rejected, true)
+  assert.equal(r.deleted, 6)
 })
 
-test('encrypted config: last writer wins', () => {
-  const uploadYaml = dump({ encrypted: true, encryptedConfig: 'xyz' })
-  const r = mergeConfig(dump({ profiles: [p('a')] }), dump({ profiles: [p('a'), p('b')] }), uploadYaml)
-  assert.deepEqual(r, { content: uploadYaml, changed: false, rejected: false, deleted: 0 })
-  const r2 = mergeConfig(null, dump({ encrypted: true, encryptedConfig: 'abc' }), dump({ profiles: [] }))
-  assert.equal(r2.content, dump({ profiles: [] }))
-  assert.equal(r2.changed, false)
+test('percent rule: profiles', () => {
+  const four = { profiles: many(4) }
+  assert.equal(merge(four, four, { profiles: many(2) }).rejected, false)
+  assert.equal(merge(four, four, { profiles: many(1) }).rejected, true)
+  const two = { profiles: many(2) }
+  assert.equal(merge(two, two, { profiles: many(1) }).rejected, false)
+  const ten = { profiles: many(10) }
+  const r = merge(ten, ten, { profiles: many(4) }, { maxDeletePercent: 100 })
+  assert.equal(r.rejected, true)
+  assert.equal(r.deleted, 6)
+  assert.equal(merge(four, four, { profiles: many(1) }, { maxDeletePercent: 75 }).rejected, false)
+  assert.equal(merge(four, four, { profiles: many(2) }, { maxDeletePercent: 40 }).rejected, true)
+})
+
+test('percent rule: groups counted separately', () => {
+  const g = id => ({ id, name: id })
+  const three = { groups: [g('g1'), g('g2'), g('g3')], profiles: many(3) }
+  const r = merge(three, three, { groups: [g('g1')], profiles: many(3) })
+  assert.equal(r.rejected, true)
+  assert.equal(r.deletedGroups, 2)
+  assert.equal(r.deleted, 0)
+  assert.equal(merge(three, three, { groups: [g('g1'), g('g2')], profiles: many(3) }).rejected, false)
+})
+
+test('encrypted config: whole document atomic, server wins conflicts', () => {
+  const enc = c => ({ encrypted: true, encryptedConfig: c })
+  const both = merge(enc('base'), enc('srv'), enc('up'))
+  assert.deepEqual(both.cfg, enc('srv'))
+  assert.equal(both.vaultConflict, true)
+  assert.equal(both.changed, true)
+  const onlyUp = merge(enc('base'), enc('base'), enc('up'))
+  assert.deepEqual(onlyUp.cfg, enc('up'))
+  assert.equal(onlyUp.vaultConflict, false)
+  assert.equal(onlyUp.changed, false)
+  assert.deepEqual(merge(enc('base'), enc('srv'), { profiles: [p('a')] }).cfg, enc('srv'))
+  const noBase = merge(null, enc('srv'), enc('up'))
+  assert.deepEqual(noBase.cfg, enc('srv'))
+  assert.equal(noBase.changed, true)
+  assert.deepEqual(merge(null, {}, enc('up')).cfg, enc('up'))
+})
+
+const vault = (contents, keySalt, iv) => ({ version: 1, contents, keySalt, iv })
+
+test('REGRESSION Critical 1: vault is atomic, server wins on conflict', () => {
+  const b = { vault: vault('c0', 's0', 'i0') }
+  const s = { vault: vault('cA', 's0', 'iA') }
+  const u = { vault: vault('cB', 'sB', 'iB') }
+  const r = merge(b, s, u)
+  assert.deepEqual(r.cfg.vault, s.vault)
+  assert.equal(r.vaultConflict, true)
+  assert.equal(r.changed, true)
+  // a field-wise merge would mix the server keySalt with upload contents/iv here
+  const s2 = { vault: vault('cA', 'sA', 'iA') }
+  const u2 = { vault: vault('cB', 's0', 'iB') }
+  assert.deepEqual(merge(b, s2, u2).cfg.vault, s2.vault)
+})
+
+test('vault changed on one side only: that side complete, no conflict', () => {
+  const b = { vault: vault('c0', 's0', 'i0'), a: 1 }
+  const v = { vault: vault('cX', 'sX', 'iX'), a: 1 }
+  const up = merge(b, b, v)
+  assert.deepEqual(up.cfg.vault, v.vault)
+  assert.equal(up.vaultConflict, false)
+  const srv = merge(b, v, b)
+  assert.deepEqual(srv.cfg.vault, v.vault)
+  assert.equal(srv.vaultConflict, false)
+})
+
+test('colorScheme is atomic: upload wins whole scheme on conflict', () => {
+  const scheme = (fg, bg) => ({ name: 'x', foreground: fg, background: bg })
+  const b = { terminal: { colorScheme: scheme('f0', 'b0'), lightColorScheme: scheme('f0', 'b0'), fontSize: 12 } }
+  const s = { terminal: { colorScheme: scheme('fS', 'b0'), lightColorScheme: scheme('f0', 'bS'), fontSize: 14 } }
+  const u = { terminal: { colorScheme: scheme('f0', 'bU'), lightColorScheme: scheme('fU', 'b0'), fontSize: 12 } }
+  const r = merge(b, s, u)
+  assert.deepEqual(r.cfg.terminal, { colorScheme: scheme('f0', 'bU'), lightColorScheme: scheme('fU', 'b0'), fontSize: 14 })
+  assert.equal(r.vaultConflict, false)
+})
+
+test('REGRESSION Critical 2: fresh device does not overwrite server state', () => {
+  const g = id => ({ id, name: id })
+  const s = {
+    vault: vault('cS', 'sS', 'iS'),
+    appearance: { theme: 'Standard' },
+    terminal: { fontSize: 14 },
+    profiles: [p('P1'), p('P2')],
+    groups: [g('G1')],
+  }
+  const u = {
+    vault: vault('cD', 'sD', 'iD'),
+    appearance: { theme: 'Dracula' },
+    terminal: { fontSize: 18 },
+    profiles: [p('P1', { name: 'mine' }), p('P3')],
+    groups: [g('G2')],
+  }
+  const r = merge(null, s, u)
+  assert.deepEqual(r.cfg, { ...s, profiles: [p('P1'), p('P2'), p('P3')], groups: [g('G1'), g('G2')] })
+  assert.equal(r.deleted, 0)
+  assert.equal(r.deletedGroups, 0)
+  assert.equal(r.changed, true)
+})
+
+test('base null and empty server: upload taken completely', () => {
+  const u = { vault: vault('c', 's', 'i'), profiles: [p('a')], appearance: { theme: 'Dark' } }
+  const r = merge(null, {}, u)
+  assert.deepEqual(r.cfg, u)
+  assert.equal(r.changed, false)
+})
+
+test('base {} is a real base: normal 3-way merge', () => {
+  const r = mergeConfig('{}', dump({ appearance: { theme: 'Dark' } }), dump({ appearance: { theme: 'Light' } }))
+  assert.equal(yaml.load(r.content).appearance.theme, 'Light')
 })
 
 test('changed is false for identical re-upload of server state', () => {

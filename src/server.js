@@ -54,7 +54,7 @@ async function readJson(req) {
   }
 }
 
-export function createServer({ db, maxDeletes = 5 }) {
+export function createServer({ db, maxDeletes = 5, maxDeletePercent = 50 }) {
   const getConfig = (id) => {
     const config = db.prepare('SELECT * FROM configs WHERE id = ?').get(id)
     if (!config) throw new HttpError(404, 'Not found')
@@ -108,12 +108,20 @@ export function createServer({ db, maxDeletes = 5 }) {
         const baseRow = state?.base_version && db.prepare('SELECT content FROM versions WHERE id = ?').get(state.base_version)
         let merge
         try {
-          merge = mergeConfig(baseRow?.content ?? null, config.content, body.content, { maxDeletes })
+          merge = mergeConfig(baseRow?.content ?? null, config.content, body.content, { maxDeletes, maxDeletePercent })
         } catch (err) {
           throw new HttpError(400, `Invalid YAML: ${err.message}`)
         }
         ;({ changed, rejected } = merge)
         const upload = addVersion(db, id, device.id, 'upload', body.content, rejected ? 1 : 0)
+        if (merge.vaultConflict) {
+          console.log(`vault conflict: config ${id}, device ${device.name}; server vault kept, uploaded vault saved as version ${upload}`)
+        }
+        if (rejected) {
+          console.log(
+            `upload rejected: config ${id}, device ${device.name}, ${merge.deleted} profiles / ${merge.deletedGroups} groups deleted; saved as version ${upload}`,
+          )
+        }
         if (!rejected && !sameContent(merge.content, config.content)) {
           const modifiedAt = Math.max(Date.now(), config.modified_at + 2)
           const result = addVersion(db, id, device.id, 'result', merge.content)
@@ -180,6 +188,7 @@ export function createServer({ db, maxDeletes = 5 }) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const db = openDb(process.env.DB_PATH ?? './data/tabbysync.db')
   const maxDeletes = Number(process.env.MAX_PROFILE_DELETES ?? 5)
+  const maxDeletePercent = Number(process.env.MAX_DELETE_PERCENT ?? 50)
   const port = Number(process.env.PORT ?? 8080)
-  createServer({ db, maxDeletes }).listen(port, () => console.log(`TabbySync listening on :${port}`))
+  createServer({ db, maxDeletes, maxDeletePercent }).listen(port, () => console.log(`TabbySync listening on :${port}`))
 }

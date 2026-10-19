@@ -247,3 +247,96 @@ test('invalid YAML and invalid JSON give 400, oversized body 413', async (t) => 
   const res = await call('PATCH', '/api/1/configs/1', a.token, big).catch(() => ({ status: 413 }))
   assert.equal(res.status, 413)
 })
+
+function captureLogs(t) {
+  const lines = []
+  const orig = { log: console.log, error: console.error }
+  console.log = console.error = (...a) => lines.push(a.join(' '))
+  t.after(() => Object.assign(console, orig))
+  return lines
+}
+
+const withHost = (id, host) => ({ id, name: id, options: { host } })
+const vault = (keySalt, iv, contents) => ({ version: 1, keySalt, iv, contents })
+const stored = async (call, token) => yaml.load((await call('GET', '/api/1/configs/1', token)).body.content)
+
+test('vault conflict over HTTP: server vault kept whole, upload saved as version, restorable, no content logged', async (t) => {
+  const logs = captureLogs(t)
+  const { db, call, ready } = await setup(t)
+  const [a, b] = await ready('a', 'b')
+  const v0 = vault('salt0', 'iv0', 'secret-contents-0')
+  const vA = vault('salt0', 'iv-a', 'secret-contents-a')
+  const vB = vault('salt-b', 'iv-b', 'secret-contents-b')
+  const base = { profiles: [withHost('p1', 'host-one.internal')], vault: v0 }
+  await a.upload(yaml.dump(base))
+  await b.poll()
+  await a.upload(yaml.dump({ ...base, vault: vA }))
+  const res = await b.upload(yaml.dump({ ...base, vault: vB }))
+  const server = await call('GET', '/api/1/configs/1', b.token)
+  assert.deepEqual(yaml.load(server.body.content).vault, vA)
+  assert.equal(Date.parse(server.body.modified_at) - Date.parse(res.modified_at), 1)
+  const up = listVersions(db, 1).filter((v) => v.kind === 'upload' && v.device === 'b').at(-1)
+  const upContent = db.prepare('SELECT content FROM versions WHERE id = ?').get(up.id).content
+  assert.deepEqual(yaml.load(upContent).vault, vB)
+  restoreVersion(db, up.id)
+  assert.deepEqual((await stored(call, a.token)).vault, vB)
+  const conflictLines = logs.filter((l) => l.startsWith('vault conflict: config 1, device b;'))
+  assert.equal(conflictLines.length, 1)
+  assert.match(conflictLines[0], new RegExp(`version ${up.id}$`))
+  for (const l of logs) assert.doesNotMatch(l, /secret-|salt|iv-|host-one/)
+})
+
+test('fresh device uploading without download does not overwrite server state', async (t) => {
+  const logs = captureLogs(t)
+  const { call, ready } = await setup(t)
+  const [a, c] = await ready('a', 'c')
+  const serverState = {
+    profiles: [withHost('p1', 'host-one.internal'), withHost('p2', 'host-two.internal')],
+    vault: vault('s', 'i', 'contents-a'),
+    appearance: { theme: 'dark' },
+    terminal: { fontSize: 14 },
+  }
+  await a.upload(yaml.dump(serverState))
+  await c.upload(
+    yaml.dump({
+      profiles: [withHost('p1', 'changed-host.internal'), withHost('p3', 'host-three.internal')],
+      vault: vault('s2', 'i2', 'contents-c'),
+      appearance: { theme: 'light' },
+      terminal: { fontSize: 20 },
+    }),
+  )
+  const merged = await stored(call, c.token)
+  assert.deepEqual(merged.vault, serverState.vault)
+  assert.equal(merged.appearance.theme, 'dark')
+  assert.equal(merged.terminal.fontSize, 14)
+  assert.deepEqual(merged.profiles, [...serverState.profiles, withHost('p3', 'host-three.internal')])
+  assert.equal(await c.poll(), true)
+  assert.deepEqual(yaml.load(c.content), merged)
+  for (const l of logs) assert.doesNotMatch(l, /host-|contents-/)
+})
+
+test('empty server: first device without base uploads everything', async (t) => {
+  const { call, ready } = await setup(t)
+  const [a] = await ready('a')
+  const first = {
+    profiles: [withHost('p1', 'host-one.internal')],
+    vault: vault('s', 'i', 'c'),
+    appearance: { theme: 'dark' },
+  }
+  await a.upload(yaml.dump(first))
+  assert.deepEqual(await stored(call, a.token), first)
+})
+
+test('percent rule over HTTP: deleting 3 of 4 profiles is rejected', async (t) => {
+  const logs = captureLogs(t)
+  const { db, call, ready } = await setup(t)
+  const [a] = await ready('a')
+  const all = ['p1', 'p2', 'p3', 'p4']
+  await a.upload(yaml.dump({ profiles: all.map((id) => withHost(id, `${id}.internal`)) }))
+  await a.upload(yaml.dump({ profiles: [withHost('p1', 'p1.internal')] }))
+  assert.deepEqual(ids((await call('GET', '/api/1/configs/1', a.token)).body.content), all)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM versions WHERE rejected = 1').get().n, 1)
+  const line = logs.filter((l) => l.startsWith('upload rejected: config 1, device a, 3 profiles / 0 groups deleted; saved as version '))
+  assert.equal(line.length, 1)
+  for (const l of logs) assert.doesNotMatch(l, /\.internal/)
+})
