@@ -37,7 +37,7 @@ Tabby requires `https://`. The container only speaks plain HTTP, so by default i
 
 Pick the case that matches your setup:
 
-- **NPM runs as a Docker container on the same host (usual case):** in `docker-compose.yml`, uncomment the `networks` block (both the part under the service and the top-level part) and set `name` to NPM's network (find it with `docker network ls`). Proxy target: `http://tabbysync:8080`.
+- **NPM runs as a Docker container on the same host (usual case):** in `docker-compose.yml`, enable the `networks` lines: in the 2 lines under the service and the 4 lines at the end of the file, remove only the leading `# ` (hash and space), nothing else. Then set `name` to NPM's network (find it with `docker network ls`). Proxy target: `http://tabbysync:8080`.
 - **NPM is installed directly on the host:** proxy target `http://127.0.0.1:8080`.
 - **NPM runs on another host:** change the port binding to the server's LAN IP, e.g. `"192.168.1.10:8080:8080"`, and use `http://192.168.1.10:8080` as target. Warning: the plain-HTTP port is then reachable by everyone in the LAN.
 

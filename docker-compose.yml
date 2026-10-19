@@ -12,9 +12,10 @@ services:
       - MAX_DELETE_PERCENT=${MAX_DELETE_PERCENT:-50}
     volumes:
       - tabbysync-data:/data
-    # Join Nginx Proxy Manager's Docker network (uncomment both parts):
-    #    networks:
-    #      - npm
+    # To join Nginx Proxy Manager's Docker network: in the 2 lines below and the
+    # 4 "networks" lines at the end of the file, remove only the leading "# ".
+#     networks:
+#       - npm
 
 volumes:
   tabbysync-data:
@@ -22,4 +23,4 @@ volumes:
 # networks:
 #   npm:
 #     external: true
-#     name: nginx-proxy-manager_default   # name of NPM's network, see `docker network ls`
+#     name: nginx-proxy-manager_default   # NPM's network name, see `docker network ls`
