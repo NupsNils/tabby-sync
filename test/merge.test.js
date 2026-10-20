@@ -240,6 +240,15 @@ test('vault changed on one side only: that side complete, no conflict', () => {
   assert.equal(srv.vaultConflict, false)
 })
 
+test('identical vault change on both sides is no conflict', () => {
+  const b = { vault: vault('c0', 's0', 'i0') }
+  const v = { vault: vault('cX', 'sX', 'iX') }
+  const r = merge(b, v, v)
+  assert.deepEqual(r.cfg.vault, v.vault)
+  assert.equal(r.vaultConflict, false)
+  assert.equal(r.changed, false)
+})
+
 test('colorScheme is atomic: upload wins whole scheme on conflict', () => {
   const scheme = (fg, bg) => ({ name: 'x', foreground: fg, background: bg })
   const b = { terminal: { colorScheme: scheme('f0', 'b0'), lightColorScheme: scheme('f0', 'b0'), fontSize: 12 } }

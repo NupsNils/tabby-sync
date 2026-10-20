@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS versions (
   device_id INTEGER REFERENCES devices(id),
   kind TEXT NOT NULL CHECK (kind IN ('result', 'upload', 'restore')),
   rejected INTEGER NOT NULL DEFAULT 0,
+  vault_conflict INTEGER NOT NULL DEFAULT 0,
   content TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
@@ -43,6 +44,9 @@ export function openDb(path) {
   const db = new DatabaseSync(path)
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;')
   db.exec(SCHEMA)
+  if (!db.prepare('PRAGMA table_info(versions)').all().some((c) => c.name === 'vault_conflict')) {
+    db.exec('ALTER TABLE versions ADD COLUMN vault_conflict INTEGER NOT NULL DEFAULT 0')
+  }
   return db
 }
 
@@ -60,10 +64,12 @@ export function findDevice(db, token) {
   return db.prepare('SELECT * FROM devices WHERE token_hash = ? AND revoked = 0').get(hashToken(token))
 }
 
-export function addVersion(db, configId, deviceId, kind, content, rejected = 0) {
+export function addVersion(db, configId, deviceId, kind, content, rejected = 0, vaultConflict = 0) {
   const { lastInsertRowid } = db
-    .prepare('INSERT INTO versions (config_id, device_id, kind, rejected, content, created_at) VALUES (?, ?, ?, ?, ?, ?)')
-    .run(configId, deviceId, kind, rejected, content, Date.now())
+    .prepare(
+      'INSERT INTO versions (config_id, device_id, kind, rejected, vault_conflict, content, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    )
+    .run(configId, deviceId, kind, rejected, vaultConflict, content, Date.now())
   return Number(lastInsertRowid)
 }
 

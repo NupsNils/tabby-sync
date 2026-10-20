@@ -113,7 +113,7 @@ export function createServer({ db, maxDeletes = 5, maxDeletePercent = 50 }) {
           throw new HttpError(400, `Invalid YAML: ${err.message}`)
         }
         ;({ changed, rejected } = merge)
-        const upload = addVersion(db, id, device.id, 'upload', body.content, rejected ? 1 : 0)
+        const upload = addVersion(db, id, device.id, 'upload', body.content, rejected ? 1 : 0, merge.vaultConflict ? 1 : 0)
         if (merge.vaultConflict) {
           console.log(`vault conflict: config ${id}, device ${device.name}; server vault kept, uploaded vault saved as version ${upload}`)
         }

@@ -19,7 +19,7 @@ function parse(text) {
 
 function merge3(b, s, u, ctx, path) {
   if (eq(u, b)) return s
-  if (eq(s, b)) return u
+  if (eq(s, b) || eq(s, u)) return u
   const winner = ATOMIC[path]
   if (winner === 'server') {
     ctx.vaultConflict = true

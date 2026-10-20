@@ -278,12 +278,43 @@ test('vault conflict over HTTP: server vault kept whole, upload saved as version
   const up = listVersions(db, 1).filter((v) => v.kind === 'upload' && v.device === 'b').at(-1)
   const upContent = db.prepare('SELECT content FROM versions WHERE id = ?').get(up.id).content
   assert.deepEqual(yaml.load(upContent).vault, vB)
+  assert.equal(up.vault_conflict, 1)
+  assert.equal(listVersions(db, 1).filter((v) => v.vault_conflict).length, 1)
+  const out = []
+  main(['versions', '1'], db, (l) => out.push(l))
+  assert.match(out.find((l) => l.startsWith(`${up.id}\t`)), /\tvault-conflict\t/)
   restoreVersion(db, up.id)
   assert.deepEqual((await stored(call, a.token)).vault, vB)
   const conflictLines = logs.filter((l) => l.startsWith('vault conflict: config 1, device b;'))
   assert.equal(conflictLines.length, 1)
   assert.match(conflictLines[0], new RegExp(`version ${up.id}$`))
   for (const l of logs) assert.doesNotMatch(l, /secret-|salt|iv-|host-one/)
+})
+
+test('identical vault on both devices is no conflict: no log line, no mark', async (t) => {
+  const logs = captureLogs(t)
+  const { db, ready } = await setup(t)
+  const [a, b] = await ready('a', 'b')
+  const base = { profiles: [withHost('p1', 'host-one.internal')], vault: vault('salt0', 'iv0', 'c0') }
+  await a.upload(yaml.dump(base))
+  await b.poll()
+  const same = yaml.dump({ ...base, vault: vault('salt1', 'iv1', 'c1') })
+  await a.upload(same)
+  await b.upload(same)
+  assert.equal(listVersions(db, 1).filter((v) => v.vault_conflict).length, 0)
+  assert.equal(logs.filter((l) => l.startsWith('vault conflict')).length, 0)
+})
+
+test('opening a database from before vault_conflict adds the column', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'tabbysync-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const path = join(dir, 'old.db')
+  const old = openDb(path)
+  old.exec('ALTER TABLE versions DROP COLUMN vault_conflict')
+  old.close()
+  const db = openDb(path)
+  assert.ok(db.prepare('PRAGMA table_info(versions)').all().some((c) => c.name === 'vault_conflict'))
+  db.close()
 })
 
 test('fresh device uploading without download does not overwrite server state', async (t) => {

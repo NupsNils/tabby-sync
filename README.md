@@ -90,6 +90,24 @@ node src/cli.js restore <versionId>
 
 Rejected uploads appear in the version list with the "rejected" flag. After `restore`, devices fetch the restored state within about a minute.
 
+## Vault conflicts (saved passwords)
+
+Tabby re-encrypts the whole vault whenever a saved password changes. If two devices save passwords within about a minute of each other, the server keeps its own vault and the other device's new password is gone after its next sync.
+
+How to spot it: `node src/cli.js versions <configId>` shows `vault-conflict` in the status column of that upload (the container log also has a `vault conflict` line).
+
+How to fix it:
+
+- Easiest: on the affected device, save the missing password again.
+- Or restore the marked version: `node src/cli.js restore <versionId>`. This brings back that device's complete upload, including its vault. A password saved on the other device in the same minute then has to be saved again there.
+
+## Deleting many profiles on purpose
+
+The mass-deletion guard also stops deliberate clean-ups. Example: with 3 profiles, deleting 2 at once is more than 50 % and is rejected; Tabby then silently downloads the server state and the profiles come back. Two ways around it:
+
+- **Delete them one by one** and wait about a minute after each deletion until it has synced.
+- **Raise the limit temporarily:** in the stack's environment variables set `MAX_DELETE_PERCENT=100` (and `MAX_PROFILE_DELETES` to a higher number if you delete more than 5), redeploy the stack, delete the profiles in Tabby and wait a minute. Then set the values back (defaults 50 and 5) and redeploy again.
+
 ## Backup
 
 Back up the volume `tabbysync-data` or the file `/data/tabbysync.db`.

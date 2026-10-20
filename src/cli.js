@@ -31,7 +31,7 @@ export const listConfigs = (db) =>
 export const listVersions = (db, configId) =>
   db
     .prepare(
-      `SELECT v.id, v.kind, v.rejected, d.name AS device, v.created_at, v.content
+      `SELECT v.id, v.kind, v.rejected, v.vault_conflict, d.name AS device, v.created_at, v.content
        FROM versions v LEFT JOIN devices d ON d.id = v.device_id
        WHERE v.config_id = ? ORDER BY v.id`,
     )
@@ -75,8 +75,9 @@ export function main(argv, db, out = console.log) {
   } else if (cmd === 'config' && sub === 'list') {
     listConfigs(db).forEach((c) => out(`${c.id}\t${c.name}\t${iso(c.modified_at)}\t${c.profiles} profiles`))
   } else if (cmd === 'versions' && sub) {
+    const status = (v) => [v.rejected && 'rejected', v.vault_conflict && 'vault-conflict'].filter(Boolean).join(',') || 'ok'
     listVersions(db, Number(sub)).forEach((v) =>
-      out(`${v.id}\t${v.kind}\t${v.rejected ? 'rejected' : 'ok'}\t${v.device ?? '-'}\t${iso(v.created_at)}\t${v.profiles} profiles`),
+      out(`${v.id}\t${v.kind}\t${status(v)}\t${v.device ?? '-'}\t${iso(v.created_at)}\t${v.profiles} profiles`),
     )
   } else if (cmd === 'restore' && sub) {
     const r = restoreVersion(db, Number(sub))
